@@ -232,6 +232,68 @@ export function getOrthogonalPlacementInfo(
   const componentLength = getTwoPinComponentLength(componentToPack)
   const componentOrientation = getTwoPinComponentOrientation(componentToPack)
 
+  // Check if both pads connect to the same packed component
+  // If so, don't use orthogonal placement - parallel placement is better
+  // to minimize trace length between the two connection points
+  const connectedPackedComponentIds = new Set<string>()
+  for (const pad of functionalPads) {
+    const stronglyConnectedPadIds = getStronglyConnectedPadIds(
+      pad.padId,
+      weightedConnections,
+    )
+
+    for (const packedComponent of packedComponents) {
+      for (const packedPad of packedComponent.pads) {
+        if (packedPad.padId.endsWith("-inner")) continue
+
+        const isConnected =
+          stronglyConnectedPadIds.has(packedPad.padId) ||
+          (stronglyConnectedPadIds.size === 0 &&
+            packedPad.networkId === pad.networkId)
+
+        if (isConnected) {
+          connectedPackedComponentIds.add(packedComponent.componentId)
+        }
+      }
+    }
+  }
+
+  // If all connections go to the same component, skip orthogonal placement
+  if (connectedPackedComponentIds.size === 1) {
+    // Count how many of our pads connect to this single component
+    let connectionCount = 0
+    const targetComponentId = [...connectedPackedComponentIds][0]!
+    const targetComponent = packedComponents.find(
+      (c) => c.componentId === targetComponentId,
+    )!
+
+    for (const pad of functionalPads) {
+      const stronglyConnectedPadIds = getStronglyConnectedPadIds(
+        pad.padId,
+        weightedConnections,
+      )
+
+      for (const packedPad of targetComponent.pads) {
+        if (packedPad.padId.endsWith("-inner")) continue
+
+        const isConnected =
+          stronglyConnectedPadIds.has(packedPad.padId) ||
+          (stronglyConnectedPadIds.size === 0 &&
+            packedPad.networkId === pad.networkId)
+
+        if (isConnected) {
+          connectionCount++
+          break // Only count once per functional pad
+        }
+      }
+    }
+
+    // If 2 or more pads connect to the same chip, don't use orthogonal placement
+    if (connectionCount >= 2) {
+      return { shouldPlaceOrthogonally: false }
+    }
+  }
+
   // Find target pads that this component connects to
   for (const pad of functionalPads) {
     const stronglyConnectedPadIds = getStronglyConnectedPadIds(
