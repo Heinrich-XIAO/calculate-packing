@@ -1,19 +1,19 @@
-import type { GraphicsObject } from "graphics-debug"
-import { setPackedComponentPadCenters } from "./setPackedComponentPadCenters"
-import { sortComponentQueue } from "./sortComponentQueue"
-import { SingleComponentPackSolver } from "../SingleComponentPackSolver/SingleComponentPackSolver"
+import { computeDistanceBetweenBoxes } from "@tscircuit/math-utils"
 import { BaseSolver } from "@tscircuit/solver-utils"
+import type { GraphicsObject } from "graphics-debug"
+import { getColorForString } from "lib/testing/createColorMapFromStrings"
+import { getComponentBounds } from "../geometry/getComponentBounds"
+import { getPolygonCentroid } from "../math/getPolygonCentroid"
+import { isPointInPolygon } from "../math/isPointInPolygon"
+import { SingleComponentPackSolver } from "../SingleComponentPackSolver/SingleComponentPackSolver"
 import type {
   InputComponent,
   OutputPad,
   PackedComponent,
   PackInput,
 } from "../types"
-import { getColorForString } from "lib/testing/createColorMapFromStrings"
-import { computeDistanceBetweenBoxes } from "@tscircuit/math-utils"
-import { getComponentBounds } from "../geometry/getComponentBounds"
-import { isPointInPolygon } from "../math/isPointInPolygon"
-import { getPolygonCentroid } from "../math/getPolygonCentroid"
+import { setPackedComponentPadCenters } from "./setPackedComponentPadCenters"
+import { sortComponentQueue } from "./sortComponentQueue"
 
 export class PackSolver2 extends BaseSolver {
   declare activeSubSolver: SingleComponentPackSolver | null | undefined
@@ -162,6 +162,7 @@ export class PackSolver2 extends BaseSolver {
       bounds: this.packInput.bounds,
       boundaryOutline: this.packInput.boundaryOutline,
       weightedConnections: this.packInput.weightedConnections,
+      allComponents: this.packInput.components,
     })
     fallbackSolver.solve()
     const result = fallbackSolver.getResult()
@@ -209,6 +210,7 @@ export class PackSolver2 extends BaseSolver {
         bounds: this.packInput.bounds,
         boundaryOutline: this.packInput.boundaryOutline,
         weightedConnections: this.packInput.weightedConnections,
+        allComponents: this.packInput.components,
       })
       this.activeSubSolver.setup()
     }
