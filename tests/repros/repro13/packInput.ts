@@ -506,7 +506,7 @@ export const packSolver2ReproInput: PackInput = {
   bounds: {
     minX: -10,
     maxX: 10,
-    minY: -15,
-    maxY: 15,
+    minY: -10,
+    maxY: 10,
   },
 }

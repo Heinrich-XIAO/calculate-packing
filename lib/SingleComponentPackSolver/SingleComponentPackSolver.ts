@@ -1,26 +1,22 @@
-import { type Bounds, computeDistanceBetweenBoxes } from "@tscircuit/math-utils"
-import { BaseSolver } from "@tscircuit/solver-utils"
 import type { GraphicsObject, Line, Point, Rect } from "graphics-debug"
-import { getComponentBounds } from "lib/geometry/getComponentBounds"
-import { isPointInPolygon } from "lib/math/isPointInPolygon"
-import { checkOverlapWithPackedComponents } from "lib/PackSolver2/checkOverlapWithPackedComponents"
 import { constructOutlinesFromPackedComponents } from "../constructOutlinesFromPackedComponents"
-import type { Segment } from "../geometry/types"
 import { OutlineSegmentCandidatePointSolver } from "../OutlineSegmentCandidatePointSolver/OutlineSegmentCandidatePointSolver"
 import { setPackedComponentPadCenters } from "../PackSolver2/setPackedComponentPadCenters"
+import { BaseSolver } from "@tscircuit/solver-utils"
 import { getGraphicsFromPackOutput } from "../testing/getGraphicsFromPackOutput"
+import type { Segment } from "../geometry/types"
 import type {
   InputComponent,
-  InputObstacle,
   PackedComponent,
-  PackInput,
   PackPlacementStrategy,
+  InputObstacle,
+  PackInput,
 } from "../types"
 import { isStrongConnection } from "../utils/isStrongConnection"
-import {
-  getOrthogonalPlacementInfo,
-  type OrthogonalPlacementInfo,
-} from "../utils/orthogonalPlacement"
+import { checkOverlapWithPackedComponents } from "lib/PackSolver2/checkOverlapWithPackedComponents"
+import { computeDistanceBetweenBoxes, type Bounds } from "@tscircuit/math-utils"
+import { isPointInPolygon } from "lib/math/isPointInPolygon"
+import { getComponentBounds } from "lib/geometry/getComponentBounds"
 
 type Phase = "outline" | "segment_candidate" | "evaluate"
 
@@ -61,7 +57,6 @@ export class SingleComponentPackSolver extends BaseSolver {
   obstacles: InputObstacle[]
   boundaryOutline?: Array<{ x: number; y: number }>
   weightedConnections?: PackInput["weightedConnections"]
-  allComponents?: InputComponent[]
 
   // Phase management
   currentPhase: Phase = "outline"
@@ -76,9 +71,6 @@ export class SingleComponentPackSolver extends BaseSolver {
   outputPackedComponent?: PackedComponent
   bounds?: Bounds
 
-  // Orthogonal placement info for two-pin components
-  private orthogonalPlacementInfo?: OrthogonalPlacementInfo
-
   constructor(params: {
     componentToPack: InputComponent
     packedComponents: PackedComponent[]
@@ -88,7 +80,6 @@ export class SingleComponentPackSolver extends BaseSolver {
     bounds?: Bounds
     boundaryOutline?: Array<{ x: number; y: number }>
     weightedConnections?: PackInput["weightedConnections"]
-    allComponents?: InputComponent[]
   }) {
     super()
     this.componentToPack = params.componentToPack
@@ -99,7 +90,6 @@ export class SingleComponentPackSolver extends BaseSolver {
     this.bounds = params.bounds
     this.boundaryOutline = params.boundaryOutline
     this.weightedConnections = params.weightedConnections
-    this.allComponents = params.allComponents
   }
 
   override _setup() {
@@ -111,15 +101,6 @@ export class SingleComponentPackSolver extends BaseSolver {
     this.activeSubSolver = undefined
     this.currentSegmentIndex = 0
     this.currentRotationIndex = 0
-
-    // Check if this is a two-pin component that should be placed orthogonally
-    this.orthogonalPlacementInfo = getOrthogonalPlacementInfo(
-      this.componentToPack,
-      this.packedComponents,
-      this.minGap,
-      this.weightedConnections,
-      this.allComponents,
-    )
   }
 
   override _step() {
@@ -517,60 +498,6 @@ export class SingleComponentPackSolver extends BaseSolver {
         totalDistance += useSquaredDistance
           ? minDistanceToNetwork * minDistanceToNetwork
           : minDistanceToNetwork
-      }
-    }
-
-    // Apply orthogonal placement preference for two-pin components
-    // If this component should be placed orthogonally and this rotation is preferred,
-    // apply a small bonus (multiplier < 1) to favor this rotation
-    if (
-      this.orthogonalPlacementInfo?.shouldPlaceOrthogonally &&
-      this.orthogonalPlacementInfo.preferredRotations &&
-      this.orthogonalPlacementInfo.targetPad
-    ) {
-      const normalizedRotation = ((rotation % 360) + 360) % 360
-      const isPreferredRotation =
-        this.orthogonalPlacementInfo.preferredRotations.some(
-          (r) => Math.abs((((r % 360) + 360) % 360) - normalizedRotation) < 1,
-        )
-
-      if (isPreferredRotation) {
-        // Apply a 30% bonus to preferred rotations
-        // This makes orthogonal rotations strongly preferred
-        totalDistance *= 0.7
-
-        // Additionally, apply a bonus for being aligned with the target pad's long axis
-        // This encourages the connected pad to be directly above/below vertical pads
-        // or directly left/right of horizontal pads
-        const targetPad = this.orthogonalPlacementInfo.targetPad
-        const isPadVertical = targetPad.size.y > targetPad.size.x
-        const isPadHorizontal = targetPad.size.x > targetPad.size.y
-
-        // Find the component's pad that connects to the target pad
-        const connectedPad = tempComponent.pads.find(
-          (p) => p.networkId === targetPad.networkId,
-        )
-
-        if (connectedPad && isPadVertical) {
-          // For vertical pads, prefer positions where connected pad X aligns with target pad X
-          const xOffset = Math.abs(
-            connectedPad.absoluteCenter.x - targetPad.absoluteCenter.x,
-          )
-          // Apply up to 15% bonus for being aligned (xOffset = 0)
-          // Bonus decreases as xOffset increases, capped at component length
-          const maxOffset = targetPad.size.x + this.minGap * 2
-          const alignmentBonus = Math.max(0, 1 - xOffset / maxOffset) * 0.15
-          totalDistance *= 1 - alignmentBonus
-        } else if (connectedPad && isPadHorizontal) {
-          // For horizontal pads, prefer positions where connected pad Y aligns with target pad Y
-          const yOffset = Math.abs(
-            connectedPad.absoluteCenter.y - targetPad.absoluteCenter.y,
-          )
-          // Apply up to 15% bonus for being aligned (yOffset = 0)
-          const maxOffset = targetPad.size.y + this.minGap * 2
-          const alignmentBonus = Math.max(0, 1 - yOffset / maxOffset) * 0.15
-          totalDistance *= 1 - alignmentBonus
-        }
       }
     }
 
