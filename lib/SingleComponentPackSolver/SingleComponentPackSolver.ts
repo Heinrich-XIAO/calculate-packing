@@ -1,22 +1,22 @@
+import { type Bounds, computeDistanceBetweenBoxes } from "@tscircuit/math-utils"
+import { BaseSolver } from "@tscircuit/solver-utils"
 import type { GraphicsObject, Line, Point, Rect } from "graphics-debug"
+import { getComponentBounds } from "lib/geometry/getComponentBounds"
+import { isPointInPolygon } from "lib/math/isPointInPolygon"
+import { checkOverlapWithPackedComponents } from "lib/PackSolver2/checkOverlapWithPackedComponents"
 import { constructOutlinesFromPackedComponents } from "../constructOutlinesFromPackedComponents"
+import type { Segment } from "../geometry/types"
 import { OutlineSegmentCandidatePointSolver } from "../OutlineSegmentCandidatePointSolver/OutlineSegmentCandidatePointSolver"
 import { setPackedComponentPadCenters } from "../PackSolver2/setPackedComponentPadCenters"
-import { BaseSolver } from "@tscircuit/solver-utils"
 import { getGraphicsFromPackOutput } from "../testing/getGraphicsFromPackOutput"
-import type { Segment } from "../geometry/types"
 import type {
   InputComponent,
-  PackedComponent,
-  PackPlacementStrategy,
   InputObstacle,
+  PackedComponent,
   PackInput,
+  PackPlacementStrategy,
 } from "../types"
 import { isStrongConnection } from "../utils/isStrongConnection"
-import { checkOverlapWithPackedComponents } from "lib/PackSolver2/checkOverlapWithPackedComponents"
-import { computeDistanceBetweenBoxes, type Bounds } from "@tscircuit/math-utils"
-import { isPointInPolygon } from "lib/math/isPointInPolygon"
-import { getComponentBounds } from "lib/geometry/getComponentBounds"
 
 type Phase = "outline" | "segment_candidate" | "evaluate"
 
@@ -501,7 +501,85 @@ export class SingleComponentPackSolver extends BaseSolver {
       }
     }
 
-    return totalDistance
+    // Outline proximity heuristic: reward/cost placements based on pad
+    // proximity to the outline of already-used areas (packed components,
+    // obstacles, and boundary). For each pad we compute the minimum distance
+    // to any outline segment and sum these distances. Lower values (pads
+    // closer to used areas) are preferred.
+    //
+    // This uses the outlines computed earlier (constructOutlinesFromPackedComponents)
+    // since they represent the used area boundary. If a boundaryOutline is
+    // provided, its segments are also considered. Obstacle rectangles are
+    // included as outline segments too.
+    const outlineProximityWeight = 0.12
+
+    // Helper: distance from point to segment
+    function pointToSegmentDist(p: Point, a: Point, b: Point) {
+      const vx = b.x - a.x
+      const vy = b.y - a.y
+      const wx = p.x - a.x
+      const wy = p.y - a.y
+      const denom = vx * vx + vy * vy
+      let t = 0
+      if (denom > 0) t = (wx * vx + wy * vy) / denom
+      if (t <= 0) return Math.hypot(p.x - a.x, p.y - a.y)
+      if (t >= 1) return Math.hypot(p.x - b.x, p.y - b.y)
+      const projx = a.x + t * vx
+      const projy = a.y + t * vy
+      return Math.hypot(p.x - projx, p.y - projy)
+    }
+
+    // Build list of outline segments from constructed outlines
+    const outlineSegments: Array<[Point, Point]> = []
+    for (const outline of this.outlines) {
+      for (const seg of outline) outlineSegments.push(seg)
+    }
+
+    // Include boundaryOutline segments
+    if (this.boundaryOutline && this.boundaryOutline.length >= 2) {
+      for (let i = 0; i < this.boundaryOutline.length; i++) {
+        const a = this.boundaryOutline[i]!
+        const b = this.boundaryOutline[(i + 1) % this.boundaryOutline.length]!
+        outlineSegments.push([a, b])
+      }
+    }
+
+    // Include obstacle rectangle edges as segments
+    for (const obs of this.obstacles) {
+      const hw = obs.width / 2 + this.minGap
+      const hh = obs.height / 2 + this.minGap
+      const cx = obs.absoluteCenter.x
+      const cy = obs.absoluteCenter.y
+      const corners = [
+        { x: cx - hw, y: cy - hh },
+        { x: cx + hw, y: cy - hh },
+        { x: cx + hw, y: cy + hh },
+        { x: cx - hw, y: cy + hh },
+      ]
+      outlineSegments.push([corners[0]!, corners[1]!])
+      outlineSegments.push([corners[1]!, corners[2]!])
+      outlineSegments.push([corners[2]!, corners[3]!])
+      outlineSegments.push([corners[3]!, corners[0]!])
+    }
+
+    let outlineProximityCost = 0
+    for (const pad of tempComponent.pads) {
+      let minDist = Infinity
+      for (const [a, b] of outlineSegments) {
+        minDist = Math.min(
+          minDist,
+          pointToSegmentDist(pad.absoluteCenter, a, b),
+        )
+      }
+      if (minDist < Infinity) outlineProximityCost += minDist
+    }
+
+    const finalScore =
+      totalDistance + outlineProximityCost * outlineProximityWeight
+
+    // Debug logging for repro14 components to inspect scoring breakdown
+
+    return finalScore
   }
 
   private createPackedComponent(
